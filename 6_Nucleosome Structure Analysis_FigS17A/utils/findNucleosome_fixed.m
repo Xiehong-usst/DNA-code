@@ -1,0 +1,269 @@
+function findNucleosome_fixed(filename, data1)
+% findNucleosome_fixed is a function used to fit nucleosomes in fixed cell data
+    % --- Preprocess
+    xd1 = min(data1,[],1);
+    for k = 1:3
+        data1(:,k) = data1(:,k) - xd1(k) + 1;
+    end
+    xd2 = max(data1,[],1);
+    
+    back1 = zeros(xd2(1),xd2(2),xd2(3));
+    back2 = ones(xd2(1),xd2(2),xd2(3));
+    
+    % --- Hyperparameter
+    R_base = 11/2;
+    R_min = 9.5/2;
+    H_base = 5.5;
+    R_sphere = H_base/2;
+    ecut = 0.05;
+    pointn_min = 5;
+    maxd_cut = round(12.5);%13.5try
+    mind_cut = 3;
+    
+    for k = 1:size(data1,1)
+        d1k = data1(k,:);
+        xx1 = d1k(1)-maxd_cut:d1k(1)+maxd_cut;
+        yy1 = d1k(2)-maxd_cut:d1k(2)+maxd_cut;
+        zz1 = d1k(3)-maxd_cut:d1k(3)+maxd_cut;
+        xx1 = xx1(xx1 > 0);
+        xx1 = xx1(xx1 <= xd2(1));
+        yy1 = yy1(yy1 > 0);
+        yy1 = yy1(yy1 <= xd2(2));
+        zz1 = zz1(zz1 > 0);
+        zz1 = zz1(zz1 <= xd2(3));
+    
+        for x = xx1
+            for y = yy1
+                for z = zz1
+                    v1 = [x y z] - d1k;
+                    if sum(v1.^2) < maxd_cut^2
+                        back1(x,y,z) = back1(x,y,z) + 1;
+                    end
+                    if sum(v1.^2) < mind_cut^2
+                        back2(x,y,z) = 0;
+                    end
+                end
+            end
+        end
+    end
+    
+    back3 = back1.*back2;
+    back3(back3 < pointn_min) = 0;
+    
+    %%
+    tic;
+    n1 = 0;
+    n2 = 0;
+    e2_all = zeros(xd2(1),xd2(2),xd2(3))+inf;
+    ne_all = zeros(xd2(1),xd2(2),xd2(3))+inf;
+    for xx = 1:xd2(1)
+        fprintf([num2str(xx) '/' num2str(xd2(1))]);
+        toc;
+        tn1 = xd2(2)*xd2(3);
+        e2_all_sub = zeros(1,tn1)+inf;
+        ne_all_sub = zeros(1,tn1)+inf;
+        back3_sub = back3(xx,:,:);
+    
+        parfor tt = 1:tn1
+            yy = floor((tt - 1)/xd2(3)) + 1;
+            zz = tt - (yy - 1)*xd2(3);
+            if back3_sub(1,yy,zz) > 0
+                [data2, v5] = get_side(data1,xx,yy,zz);
+                if min(v5) < 0
+                    n1 = n1 + 1;
+                    O = [xx yy zz];
+                    theta_res = 10; 
+                    phi_res = 10; 
+                    [X, Y, Z] = getHalfPointsOnSphere(O, R_sphere, theta_res, phi_res);
+                    nx = numel(X);
+                    e2_list = zeros(1,nx);
+                    for k = 1:nx
+                        P1 = [X(k) Y(k) Z(k)];
+                        P2 = O*2 - P1;
+                        d1 = dist_to_cylinder(data2, P1, P2, R_base);
+                        [ud1,nur] = sort(d1,'ascend');
+                        e2a = [];
+                        for r = pointn_min:min(size(data2,1),14)
+                            e2 = sum(ud1(1:r).^2)/r/r/r;
+                    
+                            data3 = data2(nur(1:r),:);
+                            [v6] = get_error(data3,xx,yy,zz);
+                            if min(v6) >= 0
+                                e2 = inf;
+                            end
+                    
+                            e2a = [e2a e2];
+                        end
+                        e2_list(k) = min(e2a);
+                    end
+                    ne = find(e2_list == min(e2_list));
+                    ne = ne(1);
+                    e2_all_sub(tt) = min(e2_list);
+                    ne_all_sub(tt) = ne;
+                end
+            end
+        end
+        for tt = 1:tn1
+            yy = floor((tt - 1)/xd2(3)) + 1;
+            zz = tt - (yy - 1)*xd2(3);
+            e2_all(xx,yy,zz) = e2_all_sub(tt);
+            ne_all(xx,yy,zz) = ne_all_sub(tt);
+        end
+    end
+    
+    %%
+    tic;
+    figure;
+    axes1 = gca; % 获取当前坐标轴
+    e2_all_re = sort(reshape(e2_all,1,numel(e2_all)),'ascend');
+    
+    nz = find(e2_all < 10^(-80) + ecut);
+    scatter3(data1(:,1),data1(:,2),data1(:,3),50,'k'); 
+    %scatter3(data1(:,1),data1(:,2),data1(:,3),50,'k','filled');
+    hold on;
+    axis equal;
+    
+    data3_list = [];
+    bestR_list = [];
+    error_list = [];
+    un1 = 0;
+    
+    data_new1 = [];
+    theta_res = 10;
+    phi_res = 10;
+    [X0, Y0, Z0] = getHalfPointsOnSphere([0 0 0], R_sphere, theta_res, phi_res);
+    
+    nzu1 = 0;
+    for zu = 1:numel(nz)
+        if mod(zu,round(numel(nz)/100)) == 0
+            nzu1 = nzu1 + 1;
+            fprintf(['PART II ' num2str(nzu1) '/100']);
+            toc;
+        end
+        nz1 = nz(zu);
+        [x1,y1,z1] = ind2sub(size(e2_all),nz1);
+        O = [x1 y1 z1];
+    
+        k1 = ne_all(x1,y1,z1);
+        P1 = [X0(k1) Y0(k1) Z0(k1)] + O;
+        P2 = O*2 - P1;
+        
+        
+        [data2, v5] = get_side(data1,x1,y1,z1);
+    
+        if size(data2,1) >= pointn_min
+            d1 = dist_to_cylinder(data2, P1, P2, R_base);
+            [ud1,nn1] = sort(d1,'ascend');
+            
+            r_list = pointn_min:min(size(data2,1),14);
+            e2a = zeros(1,max(r_list)) + inf;
+            inside_ID1 = is_inside_cylinder(data2, P1, P2, R_min);
+            for r = r_list
+                e2 = sum(ud1(1:r).^2)/r/r/r;
+        
+                rcut = ud1(r) + 10^(-80);
+                nd1 = d1 < rcut;
+                data3 = data2(nd1,:);
+                [v6] = get_error(data3,x1,y1,z1);
+                if min(v6) >= 0
+                    e2 = inf;
+                else
+                
+                    inside_ID2 = is_inside_cylinder(data3, P1, P2, R_min);
+                    if sum(inside_ID1) > sum(inside_ID2)
+                        e2 = inf;
+                    end
+                end
+        
+                e2a(r) = e2;
+            end
+        
+            if min(e2a) < ecut
+                [~,rn] = min(e2a);
+                rcut = ud1(rn) + 10^(-8);
+                nd1 = find(d1 < rcut);  
+                data3 = data2(nd1,:);
+            
+                bestR = cylinder_fitR(data3, P1, P2);
+            
+            
+                bad_point_tag = 0;
+                if min(e2a) > 10^8
+                    bad_point_tag = 1;
+                end
+            
+                
+                overlap_tag = 0;
+    
+                if numel(data_new1) > 0
+                    for r = 1:size(data3,1)
+                        v1 = data_new1 - data3(r,:);
+                        if min(sum(v1'.^2)) < 10^(-5)
+                            overlap_tag = 1;
+                            break;
+                        end
+                    end
+                end
+    
+                if overlap_tag == 0 && bad_point_tag == 0
+                    un1 = un1 + 1;
+                    data3_list{un1} = data3;
+                    bestR_list = [bestR_list bestR];
+                    data_new1 = [data_new1; data3];
+                    error_list = [error_list; min(e2a)];
+                    
+            
+                    
+                    plot_cylinder_with_points(P1, P2, bestR, rand(1,3)*0.7);
+                    scatter3(data3(:,1),data3(:,2),data3(:,3),50,'r','filled');
+                end
+            end
+        end
+    end
+
+    
+    fig_children = allchild(axes1);
+
+   
+    fig_dir = './';
+    param_dir = './';
+
+    if ~exist(fig_dir, 'dir')
+        mkdir(fig_dir);
+    end
+    if ~exist(param_dir, 'dir')
+        mkdir(param_dir);
+    end
+    main_fig = gcf;
+    % ======
+    view(main_fig.CurrentAxes, [-618.018959391661 8.82759768747361]);
+    title(main_fig.CurrentAxes, 'Global View');
+    savefig(main_fig, sprintf('%s%s_GlobalView.fig', fig_dir, filename));
+    fprintf('Saved global view: %s%s_GlobalView.fig\n', fig_dir, filename);
+    % ======
+    fig2 = figure('Name', 'Region i', 'Color', 'w', 'Position', [200, 200, 600, 500]); 
+    copyobj(allchild(main_fig.CurrentAxes), gca); 
+    ax2 = gca;
+    set(ax2, 'Position', [0.2, 0.2, 0.6, 0.6]); 
+    axis(ax2, 'equal');
+    axis(ax2, 'vis3d');
+    ax2.Projection = 'perspective';
+    grid(ax2, 'on');
+    xlabel(ax2, 'X (nm)');
+    ylabel(ax2, 'Y (nm)');
+    zlabel(ax2, 'Z (nm)');
+    title(ax2, 'Region i');
+    
+    view([-47.2050991471958 -9.65746374241796]);
+    ax2.XLim = [283.117581120131 325.433081806002];
+    ax2.YLim = [251.760084187911 294.777916835374];
+    ax2.ZLim = [275.927594756807 328.778074866546];
+    
+   
+    
+    drawnow; 
+  
+    savefig(fig2, sprintf('%s%s_Region1.fig', fig_dir, filename));
+    fprintf('Saved region 1: %s%s_Region1.fig\n', fig_dir, filename);
+    
+end
