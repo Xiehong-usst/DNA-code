@@ -1,0 +1,1 @@
+figure;plotAllCylinders(allCylinders(10:12));
