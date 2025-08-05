@@ -1,0 +1,15 @@
+close all;
+clear;
+addpath(fullfile(pwd, 'utils'));
+filename = 'Fig3B20230407area5_6100_demo1.tif';
+read_tif_lky;
+data_new1 = data([2 3 4 6 7 8 12 13],:);
+data4 = data;
+xd1 = [4 4 4];
+matname = '6100-demo1';
+findNucleosome(matname,data_new1);
+load(['.\data\' matname]);
+name = matname;
+close all;
+drawSpiral_view1;
+drawSpiral_view2;

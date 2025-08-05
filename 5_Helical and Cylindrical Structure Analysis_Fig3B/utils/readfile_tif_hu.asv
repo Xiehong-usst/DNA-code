@@ -1,0 +1,65 @@
+% 读取多页16位TIFF堆栈（支持多选）
+[filenames, pathname] = uigetfile('*.tif', '选择多页TIFF文件', 'MultiSelect', 'on');
+if isequal(filenames, 0)
+    disp('用户取消选择');
+    return;
+end
+
+% 如果只选一个文件，转换为cell数组保持一致性
+if ischar(filenames)
+    filenames = {filenames};
+end
+
+% 对每个文件进行处理
+for fileIdx = 1:length(filenames)
+    filename = filenames{fileIdx};
+    filepath = fullfile(pathname, filename);
+    info = imfinfo(filepath);
+    numPages = numel(info);
+    
+    % 从文件名中去除扩展名 '.tif'
+    [~, matFilename, ~] = fileparts(filename);
+    
+    % 预分配空间（使用cell数组存储每层数据）
+    allData = cell(numPages, 1);
+    
+    for z = 1:numPages
+        tifImage = imread(filepath, z);
+        [height, width] = size(tifImage);
+        [X, Y] = meshgrid(1:width, 1:height);
+        
+        % 获取当前层的所有点数据
+        currentData = [X(:), Y(:), repmat(z, numel(X), 1), double(tifImage(:))];
+        
+        % 仅保留Count ≥ 1的点
+        validIdx = currentData(:,4) >= 1;
+        allData{z} = currentData(validIdx, :);
+    end
+    
+    % 合并所有数据
+    data = vertcat(allData{:});
+    data(:,2) = max(data(:,2)) + 1 - data(:,2); % 反转Y轴（匹配ImageJ坐标系）
+    
+    % 按Count值扩展数据行
+    repeat_counts = data(:, 4);
+    new_total_rows = sum(repeat_counts);
+    expanded_data = zeros(new_total_rows, 3); % 只保留XYZ，不重复Count列
+    
+    current_index = 1;
+    for i = 1:size(data, 1)
+        reps = repeat_counts(i);
+        expanded_data(current_index:current_index+reps-1, :) = repmat(data(i, 1:3), reps, 1);
+        current_index = current_index + reps;
+    end
+    
+    % 将扩展后的数据重命名为data（覆盖原数据）
+    data = expanded_data; % 最终输出仅包含XYZ坐标
+      % 将扩展后的数据重命名为matFilename（动态变量名）
+    eval([matFilename ' = expanded_data;']);
+    
+    % 保存到MAT文件（文件名与TIFF文件相同，不含扩展名）
+    save(fullfile(pathname, ['3d_cluster_' matFilename '.mat']), 'data');
+    disp(['已处理并保存: ' matFilename '.mat']);
+end
+
+disp('所有文件处理完成！');
